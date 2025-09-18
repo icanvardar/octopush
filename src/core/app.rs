@@ -1,48 +1,12 @@
-use serde::{Deserialize, Serialize};
-
-use crate::core::auth::AuthType;
+use crate::core::{auth::AuthType, profile::Profile, project::Project};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-
-pub struct Project {
-    pub path: String,
-}
-
-#[derive(Serialize, Debug, Deserialize, Clone)]
-pub struct Profile {
-    pub name: String,
-    pub email: String,
-    pub auth_type: AuthType,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hostname: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_key_path: Option<String>,
-}
-
-impl Profile {
-    pub fn build(
-        name: String,
-        email: String,
-        auth_type: AuthType,
-        hostname: Option<String>,
-        ssh_key_path: Option<String>,
-    ) -> Self {
-        Profile {
-            name,
-            email,
-            auth_type,
-            hostname,
-            ssh_key_path,
-        }
-    }
-}
+use std::path::PathBuf;
 
 pub struct App {
-    pub profiles: Option<Vec<Profile>>,
-    pub global_profile_name: Option<Profile>,
-    pub current_scopes: Option<HashMap<Project, Profile>>,
+    pub profiles: HashMap<String, Profile>,
+    pub global_profile: Option<Profile>,
 }
 
 // .octopush file format
@@ -193,6 +157,21 @@ trait ProfileManager {
 impl ProfileManager for App {}
 
 impl App {
+    pub fn new() -> Result<Self, std::io::Error> {
+        let profiles = Self::read_profiles()?;
+
+        Ok(Self {
+            profiles,
+            global_profile: Some(Profile::build(
+                "test".to_string(),
+                "test@email.com".to_string(),
+                AuthType::None,
+                None,
+                None,
+            )),
+        })
+    }
+
     pub fn add_profile(profile_name: String, profile: Profile) -> Result<(), io::Error> {
         <Self as ProfileManager>::add_profile(profile_name, profile)
     }
@@ -219,7 +198,8 @@ impl App {
             ));
         }
 
-        let repo_name = get_repo_name(Path::new(&project_path))?;
+        let project = Project::new(project_path)?;
+        let repo_name = project.get_repo_name()?;
 
         let mut map = <Self as ProfileManager>::read_project_profiles()?;
         map.insert(repo_name, profile_name);
@@ -227,7 +207,8 @@ impl App {
     }
 
     pub fn get_project_profile(project_path: String) -> Result<Profile, io::Error> {
-        let repo_name = get_repo_name(Path::new(&project_path))?;
+        let project = Project::new(project_path)?;
+        let repo_name = project.get_repo_name()?;
 
         match App::read_project_profile(&repo_name)? {
             Some(profile) => Ok(profile),
@@ -239,50 +220,11 @@ impl App {
     }
 
     pub fn reset_profile_for_project(project_path: String) -> Result<(), io::Error> {
-        let repo_name = get_repo_name(Path::new(&project_path))?;
+        let project = Project::new(project_path)?;
+        let repo_name = project.get_repo_name()?;
 
         let mut map = <Self as ProfileManager>::read_project_profiles()?;
         map.remove(&repo_name);
         <Self as ProfileManager>::write_project_profiles(&map)
     }
-}
-
-fn get_repo_name(project_path: &Path) -> Result<String, io::Error> {
-    match resolve_git_repo_name(project_path)? {
-        Some(name) => Ok(name),
-        None => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "no git repository found for given project path",
-            ));
-        }
-    }
-}
-
-fn resolve_git_repo_name(start: &Path) -> Result<Option<String>, io::Error> {
-    let mut cur = if start.is_file() {
-        start
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
-    } else {
-        start.to_path_buf()
-    };
-
-    loop {
-        let git_dir = cur.join(".git");
-        if git_dir.is_dir() {
-            if let Some(name) = cur.file_name().and_then(|n| n.to_str()) {
-                return Ok(Some(name.to_string()));
-            } else {
-                return Ok(None);
-            }
-        }
-
-        if !cur.pop() {
-            break;
-        }
-    }
-
-    Ok(None)
 }

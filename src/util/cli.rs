@@ -1,9 +1,6 @@
 use crate::{
-    core::{
-        app::{App, Profile},
-        auth::AuthType,
-    },
-    util::system::cwd,
+    core::{app::App, auth::AuthType, profile::Profile},
+    util::{output::Runner, system::cwd},
 };
 use clap::{Parser, Subcommand};
 use dialoguer::{Input, Select};
