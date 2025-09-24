@@ -18,7 +18,11 @@ pub struct App {
 // ssh_key_path = [optional(string)]
 
 trait ProfileManager {
-    const CONFIG_DIR_NAME: &str = "octopush";
+    const CONFIG_DIR_NAME: &str = if cfg!(test) {
+        "octopush-test"
+    } else {
+        "octopush"
+    };
     const PROFILES_FILE_NAME: &str = "profiles.toml";
     const PROJECT_PROFILES_FILE_NAME: &str = "project_profiles.toml";
 
@@ -131,12 +135,44 @@ trait ProfileManager {
 
     fn update_profile(profile_name: String, profile: Profile) -> Result<(), io::Error> {
         let mut profiles = Self::read_profiles()?;
-        if !profiles.contains_key(&profile_name) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("profile '{}' not found", profile_name),
-            ));
+
+        match profiles.get(&profile_name) {
+            Some(p) => match p.auth_type {
+                AuthType::None => {
+                    if profile.hostname.is_some() || profile.ssh_key_path.is_some() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "you cannot update 'hostname' or 'ssh_key_path' for 'none' auth type"
+                            ),
+                        ));
+                    }
+                }
+                AuthType::SSH => {
+                    if profile.hostname.is_some() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("you cannot update 'hostname' for 'ssh' auth type"),
+                        ));
+                    }
+                }
+                AuthType::GH => {
+                    if profile.ssh_key_path.is_some() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("you cannot update 'ssh_key_path' for 'gh' auth type"),
+                        ));
+                    }
+                }
+            },
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("profile '{}' not found", profile_name),
+                ));
+            }
         }
+
         profiles.insert(profile_name, profile);
         Self::write_profiles(&profiles)
     }
@@ -159,6 +195,8 @@ impl ProfileManager for App {}
 impl App {
     pub fn new() -> Result<Self, std::io::Error> {
         let profiles = Self::read_profiles()?;
+
+        // TODO: get global profile from .gitconfig
 
         Ok(Self {
             profiles,
@@ -226,5 +264,458 @@ impl App {
         let mut map = <Self as ProfileManager>::read_project_profiles()?;
         map.remove(&repo_name);
         <Self as ProfileManager>::write_project_profiles(&map)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{env, sync::MutexGuard, time::SystemTime};
+
+    use super::*;
+
+    static CONFIG_DIR_NAME: &str = "octopush-test";
+    static PROFILES_FILE_NAME: &str = "profiles.toml";
+    static PROJECT_PROFILES_FILE_NAME: &str = "project_profiles.toml";
+    static PROFILE_1_PROFILE_NAME: &str = "profile_1_profile_name";
+    static PROFILE_2_PROFILE_NAME: &str = "profile_2_profile_name";
+    static PROFILE_1_NAME: &str = "profile_1_name";
+    static PROFILE_2_NAME: &str = "profile_2_name";
+    static PROFILE_1_EMAIL: &str = "profile-1@email.com";
+    static PROFILE_2_EMAIL: &str = "profile-2@email.com";
+    static PROFILE_1_AUTH_TYPE: AuthType = AuthType::SSH;
+    static PROFILE_2_AUTH_TYPE: AuthType = AuthType::GH;
+    static SSH_KEY_PATH: &str = "~/.ssh/id_rsa";
+    static HOSTNAME: &str = "mycompany.github.com";
+    static REPO_1_NAME: &str = "repo_1";
+    static REPO_2_NAME: &str = "repo_2";
+
+    struct TestPM {}
+
+    impl ProfileManager for TestPM {}
+
+    #[test]
+    fn gets_config_dir_returns_path_when_exists() -> Result<(), std::io::Error> {
+        let cfg = TempConfig::new()?;
+
+        let config_dir = TestPM::base_config_dir()?;
+
+        assert_eq!(config_dir, cfg.base);
+
+        Ok(())
+    }
+
+    #[test]
+    fn gets_app_config_dir_returns_path() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let path_exists = TestPM::ensure_app_config_dir()?.exists();
+
+        assert_eq!(true, path_exists);
+
+        Ok(())
+    }
+
+    #[test]
+    fn gets_profiles_config_path_returns_path() -> Result<(), std::io::Error> {
+        let cfg = TempConfig::new()?;
+
+        let path = TestPM::profiles_config_path()?;
+
+        let expected_path = cfg.base.join(CONFIG_DIR_NAME).join(PROFILES_FILE_NAME);
+
+        assert_eq!(path, expected_path);
+
+        Ok(())
+    }
+
+    #[test]
+    fn gets_project_profiles_path() -> Result<(), std::io::Error> {
+        let cfg = TempConfig::new()?;
+
+        let path = TestPM::project_profiles_path()?;
+
+        let expected_path = cfg
+            .base
+            .join(CONFIG_DIR_NAME)
+            .join(PROJECT_PROFILES_FILE_NAME);
+
+        assert_eq!(path, expected_path);
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_profile_when_no_profiles_exist_returns_none() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let result = TestPM::read_profile(PROFILE_1_NAME.to_owned())?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_profiles_when_no_profiles_exist_returns_empty_hashmap() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+        let result = TestPM::read_profiles()?;
+
+        assert!(result.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_profile_when_profiles_exist_returns_profile() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+        let ((profile_name, profile), _) = get_profiles();
+
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(profile_name.to_string(), profile.clone())]);
+
+        TestPM::write_profiles(&profiles)?;
+
+        let mut found_profile = TestPM::read_profile(profile_name.to_string())?;
+
+        assert!(!found_profile.is_none());
+        assert_eq!(found_profile.take(), Some(profile.clone()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_profiles_when_profiles_exist_returns_profile() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+        let ((profile_1_name, profile_1), (profile_2_name, profile_2)) = get_profiles();
+
+        let profiles: HashMap<String, Profile> = HashMap::from([
+            (profile_1_name.to_string(), profile_1.clone()),
+            (profile_2_name.to_string(), profile_2.clone()),
+        ]);
+
+        TestPM::write_profiles(&profiles)?;
+
+        let found_profiles = TestPM::read_profiles()?;
+
+        assert!(!found_profiles.is_empty());
+        assert_eq!(
+            found_profiles.get(profile_1_name).unwrap().to_owned(),
+            profile_1
+        );
+        assert_eq!(
+            found_profiles.get(profile_2_name).unwrap().to_owned(),
+            profile_2
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_project_profile_when_no_profiles_exist_returns_none() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let result = TestPM::read_project_profile(REPO_1_NAME)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_project_profiles_when_no_profiles_exist_returns_empty_hashmap()
+    -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+        let result = TestPM::read_project_profiles()?;
+
+        assert!(result.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_project_profile_when_profile_exists_returns_profile() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, profile_1), _) = get_profiles();
+
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(profile_1_name.to_string(), profile_1.clone())]);
+
+        TestPM::write_profiles(&profiles)?;
+
+        let project_profiles: HashMap<String, String> =
+            HashMap::from([(REPO_1_NAME.to_string(), profile_1_name.to_string())]);
+
+        TestPM::write_project_profiles(&project_profiles)?;
+
+        let result = TestPM::read_project_profile(profile_1_name)?;
+
+        assert_eq!(profile_1, result.unwrap());
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_project_profiles_when_profiles_exist_returns_hashmap() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, profile_1), (profile_2_name, profile_2)) = get_profiles();
+
+        let profiles: HashMap<String, Profile> = HashMap::from([
+            (profile_1_name.to_string(), profile_1),
+            (profile_2_name.to_string(), profile_2),
+        ]);
+
+        TestPM::write_profiles(&profiles)?;
+
+        let project_profiles: HashMap<String, String> = HashMap::from([
+            (REPO_1_NAME.to_string(), profile_1_name.to_string()),
+            (REPO_2_NAME.to_string(), profile_2_name.to_string()),
+        ]);
+
+        TestPM::write_project_profiles(&project_profiles)?;
+
+        let result = TestPM::read_project_profiles()?;
+
+        assert_eq!(project_profiles, result);
+
+        Ok(())
+    }
+
+    #[test]
+    fn adds_profile_successfully() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, profile_1), _) = get_profiles();
+
+        TestPM::add_profile(profile_1_name.to_string(), profile_1)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn errors_on_duplicate_profile() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, profile_1), _) = get_profiles();
+
+        TestPM::add_profile(profile_1_name.to_string(), profile_1.clone())?;
+        let result = TestPM::add_profile(profile_1_name.to_string(), profile_1);
+
+        let err = result.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            err.to_string(),
+            format!("profile '{}' already exists", profile_1_name)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn updates_profile_successfully() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, mut profile_1), _) = get_profiles();
+
+        TestPM::add_profile(profile_1_name.to_string(), profile_1.clone())?;
+        TestPM::update_profile(profile_1_name.to_string(), profile_1.clone())?;
+
+        profile_1.name = "isim".to_string();
+
+        TestPM::update_profile(profile_1_name.to_string(), profile_1.clone())?;
+        let updated_profile = TestPM::read_profile(profile_1_name.to_string())?;
+
+        assert!(updated_profile.is_some());
+        assert_eq!(updated_profile.unwrap(), profile_1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn errors_on_nonexistent_profile() {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, profile_1), _) = get_profiles();
+
+        let result = TestPM::update_profile(profile_1_name.to_string(), profile_1);
+        let err = result.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(
+            err.to_string(),
+            format!("profile '{}' not found", profile_1_name)
+        );
+    }
+
+    #[test]
+    fn errors_when_updating_wrong_profile_fields() {
+        let _cfg = TempConfig::new();
+
+        // profile auth types in order: 1 ssh 2 gh 3 none
+        let ((profile_1_name, mut profile_1), (profile_2_name, mut profile_2)) = get_profiles();
+        let profile_3_name = "profile_3_name";
+        let mut profile_3 = Profile::build(
+            "profile_3".to_string(),
+            "profile_3@mail.com".to_string(),
+            AuthType::None,
+            None,
+            None,
+        );
+
+        let profiles: HashMap<String, Profile> = HashMap::from([
+            (profile_1_name.to_string(), profile_1.clone()),
+            (profile_2_name.to_string(), profile_2.clone()),
+            (profile_3_name.to_string(), profile_3.clone()),
+        ]);
+        let _ = TestPM::write_profiles(&profiles);
+
+        // update wrong fields
+        profile_1.hostname = Some("hostname.github.com".to_owned());
+        profile_2.ssh_key_path = Some("some_path/to_key".to_owned());
+        profile_3.hostname = Some("hostname.github.com".to_owned());
+
+        let result = TestPM::update_profile(profile_1_name.to_string(), profile_1);
+        let err = result.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            format!("you cannot update 'hostname' for 'ssh' auth type"),
+        );
+
+        let result = TestPM::update_profile(profile_2_name.to_string(), profile_2);
+        let err = result.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            format!("you cannot update 'ssh_key_path' for 'gh' auth type"),
+        );
+
+        let result = TestPM::update_profile(profile_3_name.to_string(), profile_3);
+        let err = result.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            format!("you cannot update 'hostname' or 'ssh_key_path' for 'none' auth type"),
+        );
+    }
+
+    #[test]
+    fn delete_profile_successfully() -> Result<(), std::io::Error> {
+        let _cfg = TempConfig::new();
+
+        let ((profile_1_name, profile_1), _) = get_profiles();
+
+        TestPM::add_profile(profile_1_name.to_string(), profile_1)?;
+
+        let profile = TestPM::read_profile(profile_1_name.to_string())?;
+        assert!(profile.is_some());
+
+        TestPM::delete_profile(profile_1_name.to_string())?;
+
+        let profile = TestPM::read_profile(profile_1_name.to_string())?;
+        assert!(profile.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn errors_when_deleting_nonexistent_profile() {
+        let _cfg = TempConfig::new();
+
+        let profile_name = "profile_name";
+        let result = TestPM::delete_profile(profile_name.to_owned());
+        let err = result.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(
+            err.to_string(),
+            format!("profile '{}' not found", profile_name)
+        );
+    }
+
+    fn get_profiles<'a>() -> ((&'a str, Profile), (&'a str, Profile)) {
+        let profile_1 = Profile::build(
+            PROFILE_1_NAME.to_string(),
+            PROFILE_1_EMAIL.to_string(),
+            PROFILE_1_AUTH_TYPE,
+            None,
+            Some(SSH_KEY_PATH.to_string()),
+        );
+
+        let profile_2 = Profile::build(
+            PROFILE_2_NAME.to_string(),
+            PROFILE_2_EMAIL.to_string(),
+            PROFILE_2_AUTH_TYPE,
+            Some(HOSTNAME.to_string()),
+            None,
+        );
+
+        (
+            (PROFILE_1_PROFILE_NAME, profile_1),
+            (PROFILE_2_PROFILE_NAME, profile_2),
+        )
+    }
+
+    use std::sync::Mutex;
+    use std::{fs, time::UNIX_EPOCH};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TempConfig {
+        _guard: MutexGuard<'static, ()>,
+        base: PathBuf,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl TempConfig {
+        fn new() -> Result<Self, io::Error> {
+            let guard = match ENV_LOCK.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            let unique = format!(
+                "octopush-test-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let base = env::temp_dir().join(unique);
+            fs::create_dir_all(&base)?;
+
+            let prev = env::var_os("XDG_CONFIG_HOME");
+            unsafe {
+                env::set_var("XDG_CONFIG_HOME", &base);
+            }
+
+            Ok(TempConfig {
+                _guard: guard,
+                base,
+                prev,
+            })
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            if let Some(v) = &self.prev {
+                unsafe {
+                    env::set_var("XDG_CONFIG_HOME", v);
+                }
+            } else {
+                unsafe {
+                    env::remove_var("XDG_CONFIG_HOME");
+                }
+            }
+            let _ = fs::remove_dir_all(&self.base);
+            // _lock is released automatically here
+        }
     }
 }
