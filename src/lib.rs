@@ -7,6 +7,7 @@ pub mod core {
 
 pub mod util {
     pub mod cli;
+    pub mod git;
     pub mod output;
     pub mod system;
 }

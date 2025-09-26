@@ -1,12 +1,12 @@
 use crate::core::{auth::AuthType, profile::Profile, project::Project};
+use crate::util::git;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct App {
     pub profiles: HashMap<String, Profile>,
-    pub global_profile: Option<Profile>,
 }
 
 // .octopush file format
@@ -91,9 +91,13 @@ trait ProfileManager {
     }
 
     fn read_project_profile(repo_name: &str) -> Result<Option<Profile>, io::Error> {
-        let profiles = Self::read_profiles()?;
-
-        Ok(profiles.get(repo_name).cloned())
+        let map = Self::read_project_profiles()?;
+        if let Some(profile_name) = map.get(repo_name) {
+            let profiles = Self::read_profiles()?;
+            Ok(profiles.get(profile_name).cloned())
+        } else {
+            Ok(None)
+        }
     }
 
     fn read_project_profiles() -> Result<HashMap<String, String>, io::Error> {
@@ -188,26 +192,64 @@ trait ProfileManager {
         }
         Self::write_profiles(&profiles)
     }
+
+    fn apply_profile_to_repo(
+        profile: &Profile,
+        project_path: String,
+    ) -> Result<(), std::io::Error> {
+        let repo = Path::new(&project_path);
+        git::ensure_repo(repo)?;
+
+        git::set_local_identity(repo, &profile.name, &profile.email)?;
+
+        let remote = git::get_remote_url(repo, "origin")?;
+
+        match profile.auth_type {
+            AuthType::SSH => {
+                if let Some(key) = &profile.ssh_key_path {
+                    git::ensure_ssh_command(repo, key)?;
+                }
+                if let Some(url) = remote {
+                    if let Some((host, owner, repo_name)) = git::parse_remote(&url) {
+                        if url.starts_with("https://") {
+                            let ssh_url = git::to_ssh(&host, &owner, &repo_name);
+                            let _ = git::set_remote_url(repo, "origin", &ssh_url)?;
+                        }
+                    }
+                }
+                let _ = git::clear_gh_credential_helper(repo)?;
+            }
+            AuthType::GH => {
+                if let Some(url) = remote {
+                    if let Some((host, owner, repo_name)) = git::parse_remote(&url) {
+                        if url.starts_with("git@") || url.starts_with("ssh://") {
+                            let https_url = git::to_https(&host, &owner, &repo_name);
+                            let _ = git::set_remote_url(repo, "origin", &https_url)?;
+                        }
+                        let _gh_ok = git::is_gh_authenticated(&host);
+                    }
+                }
+                let _ = git::set_gh_credential_helper(repo)?;
+                let _ = git::clear_ssh_command(repo)?;
+            }
+            AuthType::None => {
+                let _ = git::clear_ssh_command(repo)?;
+                let _ = git::clear_gh_credential_helper(repo)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl ProfileManager for App {}
 
 impl App {
     pub fn new() -> Result<Self, std::io::Error> {
+        // NOTE: it'd be better if we delete profiles field
         let profiles = Self::read_profiles()?;
 
-        // TODO: get global profile from .gitconfig
-
-        Ok(Self {
-            profiles,
-            global_profile: Some(Profile::build(
-                "test".to_string(),
-                "test@email.com".to_string(),
-                AuthType::None,
-                None,
-                None,
-            )),
-        })
+        Ok(Self { profiles })
     }
 
     pub fn add_profile(profile_name: String, profile: Profile) -> Result<(), io::Error> {
@@ -235,13 +277,18 @@ impl App {
                 format!("profile '{}' not found", profile_name),
             ));
         }
+        let profile = profile.unwrap();
 
-        let project = Project::new(project_path)?;
+        let project = Project::new(project_path.clone())?;
         let repo_name = project.get_repo_name()?;
 
         let mut map = <Self as ProfileManager>::read_project_profiles()?;
         map.insert(repo_name, profile_name);
-        <Self as ProfileManager>::write_project_profiles(&map)
+        <Self as ProfileManager>::write_project_profiles(&map)?;
+
+        <Self as ProfileManager>::apply_profile_to_repo(&profile, project_path)?;
+
+        Ok(())
     }
 
     pub fn get_project_profile(project_path: String) -> Result<Profile, io::Error> {
@@ -258,12 +305,20 @@ impl App {
     }
 
     pub fn reset_profile_for_project(project_path: String) -> Result<(), io::Error> {
-        let project = Project::new(project_path)?;
+        let project = Project::new(project_path.clone())?;
         let repo_name = project.get_repo_name()?;
 
         let mut map = <Self as ProfileManager>::read_project_profiles()?;
         map.remove(&repo_name);
-        <Self as ProfileManager>::write_project_profiles(&map)
+        <Self as ProfileManager>::write_project_profiles(&map)?;
+
+        let repo = std::path::Path::new(&project_path);
+        git::ensure_repo(repo)?;
+        let _ = git::unset_local(repo, "user.name");
+        let _ = git::unset_local(repo, "user.email");
+        let _ = git::clear_ssh_command(repo)?;
+        let _ = git::clear_gh_credential_helper(repo)?;
+        Ok(())
     }
 }
 
@@ -292,6 +347,8 @@ mod test {
     struct TestPM {}
 
     impl ProfileManager for TestPM {}
+
+    // ProfileManager tests
 
     #[test]
     fn gets_config_dir_returns_path_when_exists() -> Result<(), std::io::Error> {
@@ -637,6 +694,8 @@ mod test {
             format!("profile '{}' not found", profile_name)
         );
     }
+
+    // App tests
 
     fn get_profiles<'a>() -> ((&'a str, Profile), (&'a str, Profile)) {
         let profile_1 = Profile::build(
