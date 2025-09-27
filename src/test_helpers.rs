@@ -11,6 +11,7 @@ pub struct TempConfig {
     pub base: PathBuf,
     pub prev: Option<std::ffi::OsString>,
     pub repo: PathBuf,
+    pub gh_dir: PathBuf,
 }
 
 impl TempConfig {
@@ -39,11 +40,15 @@ impl TempConfig {
         let repo = base.join("repo");
         Self::init_repo_at(&repo);
 
+        let gh_dir = base.join("gh");
+        Self::init_gh_hosts(&gh_dir);
+
         Ok(TempConfig {
             _guard: guard,
             base,
             prev,
             repo,
+            gh_dir,
         })
     }
 
@@ -51,6 +56,15 @@ impl TempConfig {
         fs::create_dir_all(path).unwrap();
         let o = git::run_git(path, ["init"]).unwrap();
         assert!(o.status.success(), "git init failed: {:?}", o);
+    }
+
+    fn init_gh_hosts(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        fs::write(
+            path.join("hosts.yml"),
+            "github.com:\n oauth_token: dummy\n user: someone\n",
+        )
+        .unwrap();
     }
 }
 
