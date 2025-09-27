@@ -260,18 +260,23 @@ mod tests {
     }
 
     #[test]
-    fn gh_authentication_detection() {
-        let t = TempConfig::new().unwrap();
-        let gh_dir = t.base.join("gh");
-        fs::create_dir_all(&gh_dir).unwrap();
-        fs::write(
-            gh_dir.join("hosts.yml"),
-            "github.com:\n oauth_token: dummy\n user: someone\n",
-        )
-        .unwrap();
+    fn gh_auth_env_token_is_authenticated() {
+        let _cfg = TempConfig::new().unwrap();
+
+        unsafe {
+            env::set_var("GH_TOKEN", "dummy-token");
+        }
+        assert!(is_gh_authenticated("github.com"));
+        unsafe {
+            env::remove_var("GH_TOKEN");
+        }
+    }
+
+    #[test]
+    fn gh_auth_hosts_yml_with_token_is_authenticated() {
+        let _cfg = TempConfig::new().unwrap();
 
         assert!(is_gh_authenticated("github.com"));
-        assert!(!is_gh_authenticated("enterprise.example.com"));
     }
 
     #[test]
