@@ -175,10 +175,24 @@ pub fn is_gh_authenticated(host: &str) -> bool {
                 .lines()
                 .any(|l| l.trim_start().starts_with(&format!("{}:", host)));
             let has_token = text.contains("oauth_token:");
-            return has_host && has_token;
+            if has_host && has_token {
+                return true;
+            }
         }
     }
-    false
+
+    if std::env::var_os("GH_TOKEN").is_some() || std::env::var_os("GITHUB_TOKEN").is_some() {
+        return true;
+    }
+
+    let out = std::process::Command::new("gh")
+        .args(["auth", "status", "--hostname", host])
+        .output();
+
+    match out {
+        Ok(o) => o.status.success(),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
