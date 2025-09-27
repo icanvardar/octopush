@@ -5,9 +5,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-pub struct App {
-    pub profiles: HashMap<String, Profile>,
-}
+pub struct App {}
 
 // .octopush file format
 // [profile_name]
@@ -245,13 +243,6 @@ trait ProfileManager {
 impl ProfileManager for App {}
 
 impl App {
-    pub fn new() -> Result<Self, std::io::Error> {
-        // NOTE: it'd be better if we delete profiles field
-        let profiles = Self::read_profiles()?;
-
-        Ok(Self { profiles })
-    }
-
     pub fn add_profile(profile_name: String, profile: Profile) -> Result<(), io::Error> {
         <Self as ProfileManager>::add_profile(profile_name, profile)
     }
@@ -504,7 +495,7 @@ mod test {
 
         TestPM::write_project_profiles(&project_profiles)?;
 
-        let result = TestPM::read_project_profile(profile_1_name)?;
+        let result = TestPM::read_project_profile(REPO_1_NAME)?;
 
         assert_eq!(profile_1, result.unwrap());
 
@@ -695,6 +686,14 @@ mod test {
     }
 
     // App tests
+    #[test]
+    fn use_profile_errors_when_missing_profile() {
+        let cfg = TempConfig::new().unwrap();
+
+        let err = App::use_profile("nope".to_string(), cfg.repo.to_string_lossy().to_string())
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
 
     fn get_profiles<'a>() -> ((&'a str, Profile), (&'a str, Profile)) {
         let profile_1 = Profile::build(
