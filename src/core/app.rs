@@ -695,6 +695,238 @@ mod test {
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 
+    #[test]
+    fn use_profile_applies_ssh_and_records_mapping() {
+        let cfg = TempConfig::new().unwrap();
+
+        // Arrange: write SSH profile and set an https remote to verify rewrite
+        let ((ssh_profile_name, ssh_profile), _) = get_profiles();
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(ssh_profile_name.to_string(), ssh_profile.clone())]);
+        TestPM::write_profiles(&profiles).unwrap();
+
+        // set remote to https so it should be converted to ssh
+        let _ = git::run_git(
+            &cfg.repo,
+            ["remote", "add", "origin", "https://github.com/acme/app.git"],
+        )
+        .unwrap();
+
+        // Act
+        App::use_profile(
+            ssh_profile_name.to_string(),
+            cfg.repo.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        // Assert: mapping exists for this repo
+        let repo_name = Project::new(&cfg.repo).unwrap().get_repo_name().unwrap();
+        let mapping = TestPM::read_project_profiles().unwrap();
+        assert_eq!(mapping.get(&repo_name), Some(&ssh_profile_name.to_string()));
+
+        // Assert: identity set
+        let g1 = git::run_git(&cfg.repo, ["config", "--local", "user.name"]).unwrap();
+        assert_eq!(String::from_utf8_lossy(&g1.stdout).trim(), ssh_profile.name);
+        let g2 = git::run_git(&cfg.repo, ["config", "--local", "user.email"]).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&g2.stdout).trim(),
+            ssh_profile.email
+        );
+
+        // Assert: sshCommand set (skip strict check on Windows)
+        let ssh_cmd = git::run_git(&cfg.repo, ["config", "--local", "core.sshCommand"]).unwrap();
+        if cfg!(windows) {
+            assert!(ssh_cmd.status.success());
+        } else {
+            let out = String::from_utf8_lossy(&ssh_cmd.stdout);
+            assert!(out.contains(SSH_KEY_PATH));
+        }
+
+        // Assert: remote rewritten to ssh
+        let url = git::get_remote_url(&cfg.repo, "origin").unwrap();
+        assert_eq!(url.as_deref(), Some("git@github.com:acme/app.git"));
+
+        // Assert: gh credential helper cleared
+        let gh = git::run_git(
+            &cfg.repo,
+            ["config", "--local", "--get", "credential.helper"],
+        )
+        .unwrap();
+        assert!(!gh.status.success());
+    }
+
+    #[test]
+    fn use_profile_applies_gh_and_records_mapping() {
+        let cfg = TempConfig::new().unwrap();
+
+        // Arrange: write GH profile and set an ssh remote to verify rewrite
+        let (_, gh_pair) = get_profiles();
+        let (gh_profile_name, gh_profile) = gh_pair;
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(gh_profile_name.to_string(), gh_profile.clone())]);
+        TestPM::write_profiles(&profiles).unwrap();
+
+        // set remote to ssh so it should be converted to https
+        let _ = git::run_git(
+            &cfg.repo,
+            ["remote", "add", "origin", "git@github.com:acme/app.git"],
+        )
+        .unwrap();
+
+        // Act
+        App::use_profile(
+            gh_profile_name.to_string(),
+            cfg.repo.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        // Assert: mapping exists for this repo
+        let repo_name = Project::new(&cfg.repo).unwrap().get_repo_name().unwrap();
+        let mapping = TestPM::read_project_profiles().unwrap();
+        assert_eq!(mapping.get(&repo_name), Some(&gh_profile_name.to_string()));
+
+        // Assert: identity set
+        let g1 = git::run_git(&cfg.repo, ["config", "--local", "user.name"]).unwrap();
+        assert_eq!(String::from_utf8_lossy(&g1.stdout).trim(), gh_profile.name);
+        let g2 = git::run_git(&cfg.repo, ["config", "--local", "user.email"]).unwrap();
+        assert_eq!(String::from_utf8_lossy(&g2.stdout).trim(), gh_profile.email);
+
+        // Assert: sshCommand cleared
+        let ssh =
+            git::run_git(&cfg.repo, ["config", "--local", "--get", "core.sshCommand"]).unwrap();
+        assert!(!ssh.status.success());
+
+        // Assert: remote rewritten to https
+        let url = git::get_remote_url(&cfg.repo, "origin").unwrap();
+        assert_eq!(url.as_deref(), Some("https://github.com/acme/app.git"));
+
+        // Assert: gh credential helper set
+        let gh = git::run_git(&cfg.repo, ["config", "--local", "credential.helper"]).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&gh.stdout).trim(),
+            "!gh auth git-credential"
+        );
+        let gh2 = git::run_git(&cfg.repo, ["config", "--local", "credential.useHttpPath"]).unwrap();
+        assert_eq!(String::from_utf8_lossy(&gh2.stdout).trim(), "true");
+    }
+
+    #[test]
+    fn use_profile_applies_none_clears_auth_helpers() {
+        let cfg = TempConfig::new().unwrap();
+
+        // Arrange: create a NONE profile and write it
+        let profile_name = "none_profile";
+        let none_profile = Profile::build(
+            "None User".to_string(),
+            "none@example.com".to_string(),
+            AuthType::None,
+            None,
+            None,
+        );
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(profile_name.to_string(), none_profile.clone())]);
+        TestPM::write_profiles(&profiles).unwrap();
+
+        // Pre-set ssh and gh helpers to verify they get cleared
+        git::ensure_ssh_command(&cfg.repo, "/tmp/fake_key").unwrap_or(());
+        let _ = git::run_git(
+            &cfg.repo,
+            [
+                "config",
+                "--local",
+                "credential.helper",
+                "!gh auth git-credential",
+            ],
+        )
+        .unwrap();
+
+        // Act
+        App::use_profile(
+            profile_name.to_string(),
+            cfg.repo.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        // Assert: ssh cleared
+        let ssh =
+            git::run_git(&cfg.repo, ["config", "--local", "--get", "core.sshCommand"]).unwrap();
+        assert!(!ssh.status.success());
+        // Assert: gh helper cleared
+        let gh = git::run_git(
+            &cfg.repo,
+            ["config", "--local", "--get", "credential.helper"],
+        )
+        .unwrap();
+        assert!(!gh.status.success());
+    }
+
+    #[test]
+    fn get_project_profile_returns_selected_profile() {
+        let cfg = TempConfig::new().unwrap();
+
+        // Arrange: write a profile and use it
+        let ((ssh_profile_name, ssh_profile), _) = get_profiles();
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(ssh_profile_name.to_string(), ssh_profile.clone())]);
+        TestPM::write_profiles(&profiles).unwrap();
+
+        App::use_profile(
+            ssh_profile_name.to_string(),
+            cfg.repo.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        // Act
+        let found = App::get_project_profile(cfg.repo.to_string_lossy().to_string()).unwrap();
+
+        // Assert
+        assert_eq!(found, ssh_profile);
+    }
+
+    #[test]
+    fn reset_profile_clears_mapping_and_git() {
+        let cfg = TempConfig::new().unwrap();
+
+        // Arrange: write a profile and use it
+        let ((ssh_profile_name, ssh_profile), _) = get_profiles();
+        let profiles: HashMap<String, Profile> =
+            HashMap::from([(ssh_profile_name.to_string(), ssh_profile.clone())]);
+        TestPM::write_profiles(&profiles).unwrap();
+
+        App::use_profile(
+            ssh_profile_name.to_string(),
+            cfg.repo.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        // Pre-verify mapping exists
+        let repo_name = Project::new(&cfg.repo).unwrap().get_repo_name().unwrap();
+        let mapping = TestPM::read_project_profiles().unwrap();
+        assert!(mapping.get(&repo_name).is_some());
+
+        // Act
+        App::reset_profile_for_project(cfg.repo.to_string_lossy().to_string()).unwrap();
+
+        // Assert: mapping removed
+        let mapping_after = TestPM::read_project_profiles().unwrap();
+        assert!(mapping_after.get(&repo_name).is_none());
+
+        // Assert: git identity cleared
+        let g1 = git::run_git(&cfg.repo, ["config", "--local", "--get", "user.name"]).unwrap();
+        assert!(!g1.status.success());
+        let g2 = git::run_git(&cfg.repo, ["config", "--local", "--get", "user.email"]).unwrap();
+        assert!(!g2.status.success());
+        let ssh =
+            git::run_git(&cfg.repo, ["config", "--local", "--get", "core.sshCommand"]).unwrap();
+        assert!(!ssh.status.success());
+        let gh = git::run_git(
+            &cfg.repo,
+            ["config", "--local", "--get", "credential.helper"],
+        )
+        .unwrap();
+        assert!(!gh.status.success());
+    }
+
     fn get_profiles<'a>() -> ((&'a str, Profile), (&'a str, Profile)) {
         let profile_1 = Profile::build(
             PROFILE_1_NAME.to_string(),
