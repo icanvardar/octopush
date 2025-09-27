@@ -6,7 +6,7 @@ use std::{
     process::{Command, Output},
 };
 
-fn run_git<I, S>(repo: &Path, args: I) -> Result<Output, std::io::Error>
+pub fn run_git<I, S>(repo: &Path, args: I) -> Result<Output, std::io::Error>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -179,4 +179,114 @@ pub fn is_gh_authenticated(host: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::TempConfig;
+
+    #[test]
+    fn ensure_repo_ok_and_err() {
+        let t = TempConfig::new().unwrap();
+
+        assert!(ensure_repo(&t.repo).is_ok());
+
+        let not_repo = t.base.join("not_repo");
+        fs::create_dir_all(&not_repo).unwrap();
+        assert!(ensure_repo(&not_repo).is_err());
+    }
+
+    #[test]
+    fn set_and_get_remote_url() {
+        let t = TempConfig::new().unwrap();
+
+        let add = run_git(
+            &t.repo,
+            ["remote", "add", "origin", "https://example.com/foo/bar.git"],
+        )
+        .unwrap();
+        assert!(add.status.success());
+
+        assert!(set_remote_url(&t.repo, "origin", "https://example.com/acme/app.git").is_ok());
+        let url = get_remote_url(&t.repo, "origin").unwrap();
+        assert_eq!(url.as_deref(), Some("https://example.com/acme/app.git"));
+    }
+
+    #[test]
+    fn set_and_clear_local_identity() {
+        let t = TempConfig::new().unwrap();
+
+        set_local_identity(&t.repo, "Test User", "test@example.com").unwrap();
+
+        let g1 = run_git(&t.repo, ["config", "--local", "user.name"]).unwrap();
+        assert_eq!(String::from_utf8_lossy(&g1.stdout).trim(), "Test User");
+
+        let g2 = run_git(&t.repo, ["config", "--local", "user.email"]).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&g2.stdout).trim(),
+            "test@example.com"
+        );
+
+        unset_local(&t.repo, "user.signingkey").unwrap();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn set_and_clear_ssh_command() {
+        let t = TempConfig::new().unwrap();
+
+        ensure_ssh_command(&t.repo, "/tmp/fake_key").unwrap();
+        let g = run_git(&t.repo, ["config", "--local", "core.sshCommand"]).unwrap();
+        assert!(String::from_utf8_lossy(&g.stdout).contains("/tmp/fake_key"));
+
+        clear_ssh_command(&t.repo).unwrap();
+        let g2 = run_git(&t.repo, ["config", "--local", "--get", "core.sshCommand"]).unwrap();
+        assert!(!g2.status.success());
+    }
+
+    #[test]
+    fn gh_authentication_detection() {
+        let t = TempConfig::new().unwrap();
+        let gh_dir = t.base.join("gh");
+        fs::create_dir_all(&gh_dir).unwrap();
+        fs::write(
+            gh_dir.join("hosts.yml"),
+            "github.com:\n oauth_token: dummy\n user: someone\n",
+        )
+        .unwrap();
+
+        assert!(is_gh_authenticated("github.com"));
+        assert!(!is_gh_authenticated("enterprise.example.com"));
+    }
+
+    #[test]
+    fn parse_and_format_remote_variants() {
+        let (h, o, r) = parse_remote("git@github.com:acme/app.git").unwrap();
+        assert_eq!(
+            (h, o, r),
+            ("github.com".into(), "acme".into(), "app".into())
+        );
+
+        let (h, o, r) = parse_remote("ssh://git@github.com/acme/app.git").unwrap();
+        assert_eq!(
+            (h, o, r),
+            ("github.com".into(), "acme".into(), "app".into())
+        );
+
+        let (h, o, r) = parse_remote("https://github.com/acme/app.git").unwrap();
+        assert_eq!(
+            (h, o, r),
+            ("github.com".into(), "acme".into(), "app".into())
+        );
+
+        assert_eq!(
+            to_ssh("github.com", "acme", "app"),
+            "git@github.com:acme/app.git"
+        );
+        assert_eq!(
+            to_https("github.com", "acme", "app"),
+            "https://github.com/acme/app.git"
+        );
+    }
 }
