@@ -1,7 +1,7 @@
 use crate::core::auth::AuthType;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Debug, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone, PartialEq)]
 pub struct Profile {
     pub name: String,
     pub email: String,

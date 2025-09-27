@@ -159,8 +159,7 @@ mod tests {
     }
 
     fn build_runner() -> Result<Runner, std::io::Error> {
-        let app = App::new()?;
-        let runner = Runner::new(Arc::new(app));
+        let runner = Runner::new(Arc::new(App {}));
 
         Ok(runner)
     }
