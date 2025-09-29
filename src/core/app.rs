@@ -282,12 +282,14 @@ impl App {
         Ok(())
     }
 
-    pub fn get_project_profile(project_path: String) -> Result<Profile, io::Error> {
+    pub fn get_project_profile(
+        project_path: String,
+    ) -> Result<(Profile, String) /* Profile and repo_name */, io::Error> {
         let project = Project::new(project_path)?;
         let repo_name = project.get_repo_name()?;
 
         match App::read_project_profile(&repo_name)? {
-            Some(profile) => Ok(profile),
+            Some(profile) => Ok((profile, repo_name)),
             None => Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("profile not found for '{}'", repo_name),
@@ -604,6 +606,7 @@ mod test {
         let ((profile_1_name, mut profile_1), (profile_2_name, mut profile_2)) = get_profiles();
         let profile_3_name = "profile_3_name";
         let mut profile_3 = Profile::build(
+            profile_3_name.to_string(),
             "profile_3".to_string(),
             "profile_3@mail.com".to_string(),
             AuthType::None,
@@ -817,6 +820,7 @@ mod test {
         // Arrange: create a NONE profile and write it
         let profile_name = "none_profile";
         let none_profile = Profile::build(
+            profile_name.to_string(),
             "None User".to_string(),
             "none@example.com".to_string(),
             AuthType::None,
@@ -876,11 +880,11 @@ mod test {
         )
         .unwrap();
 
-        // Act
-        let found = App::get_project_profile(cfg.repo.to_string_lossy().to_string()).unwrap();
+        let (found_profile, _) =
+            App::get_project_profile(cfg.repo.to_string_lossy().to_string()).unwrap();
 
         // Assert
-        assert_eq!(found, ssh_profile);
+        assert_eq!(found_profile, ssh_profile);
     }
 
     #[test]
@@ -929,6 +933,7 @@ mod test {
 
     fn get_profiles<'a>() -> ((&'a str, Profile), (&'a str, Profile)) {
         let profile_1 = Profile::build(
+            PROFILE_1_PROFILE_NAME.to_string(),
             PROFILE_1_NAME.to_string(),
             PROFILE_1_EMAIL.to_string(),
             PROFILE_1_AUTH_TYPE,
@@ -937,6 +942,7 @@ mod test {
         );
 
         let profile_2 = Profile::build(
+            PROFILE_2_PROFILE_NAME.to_string(),
             PROFILE_2_NAME.to_string(),
             PROFILE_2_EMAIL.to_string(),
             PROFILE_2_AUTH_TYPE,
