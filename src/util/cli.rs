@@ -9,13 +9,13 @@ use crate::{
 use clap::{Parser, Subcommand};
 use dialoguer::{Input, Select};
 
-#[derive(Parser)]
-struct Cli {
+#[derive(Debug, Parser)]
+pub struct Cli {
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Command {
     AddProfile {
         #[arg(short, long)]
@@ -50,8 +50,7 @@ enum Command {
 // validate email in the email field
 // make the ssh_key_path input autocompletable
 
-pub fn run() -> Result<(), std::io::Error> {
-    let cli = Cli::parse();
+pub fn run(cli: Cli) -> Result<(), std::io::Error> {
     let runner = Runner::new();
 
     match cli.command {
