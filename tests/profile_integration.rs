@@ -1,5 +1,6 @@
 use nix::libc::{close, dup, dup2};
 use nix::unistd::pipe;
+use std::env;
 use std::{fs, io, path::PathBuf};
 use std::{
     fs::File,
@@ -15,12 +16,12 @@ use octopush::{
     util::cli,
 };
 
-fn build_add_profile_args(profile: Profile) -> Vec<String> {
+fn build_add_profile_args(profile_name: String, profile: Profile) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "octopush".into(),
         "add-profile".into(),
         "--profile-name".into(),
-        profile.id.clone(),
+        profile_name,
         "--name".into(),
         profile.name.clone(),
         "--email".into(),
@@ -66,12 +67,12 @@ fn read_raw_profiles(base: PathBuf) -> Result<String, std::io::Error> {
 }
 
 #[test]
-fn test_profile_creation() -> Result<(), Box<dyn std::error::Error>> {
+fn tests_add_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = TempConfig::new().unwrap();
 
-    let (profile_1, _, _) = get_profiles();
+    let (profile_names, profiles) = get_profiles();
 
-    let args = build_add_profile_args(profile_1.clone());
+    let args = build_add_profile_args(profile_names[0].into(), profiles[0].clone());
 
     let parsed_cli = cli::Cli::try_parse_from(args.clone())?;
 
@@ -81,7 +82,6 @@ fn test_profile_creation() -> Result<(), Box<dyn std::error::Error>> {
 
     let expected = r#"
 [profile_1]
-id = "profile_1"
 name = "profile_1_name"
 email = "profile_1_email"
 auth_type = "None"
@@ -93,12 +93,12 @@ auth_type = "None"
 }
 
 #[test]
-fn test_profile_deletion() -> Result<(), Box<dyn std::error::Error>> {
+fn tests_delete_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = TempConfig::new().unwrap();
 
-    let (profile_1, _, _) = get_profiles();
+    let (profile_names, profiles) = get_profiles();
 
-    let args = build_add_profile_args(profile_1.clone());
+    let args = build_add_profile_args(profile_names[0].into(), profiles[0].clone());
 
     let parsed_cli = cli::Cli::try_parse_from(args.clone())?;
 
@@ -109,7 +109,6 @@ fn test_profile_deletion() -> Result<(), Box<dyn std::error::Error>> {
 
     let expected = r#"
 [profile_1]
-id = "profile_1"
 name = "profile_1_name"
 email = "profile_1_email"
 auth_type = "None"
@@ -117,7 +116,7 @@ auth_type = "None"
 
     assert_eq!(normalize(&raw_profiles), normalize(expected));
 
-    let args = build_delete_profile_args(profile_1.id);
+    let args = build_delete_profile_args(profile_names[0].into());
 
     let parsed_cli = cli::Cli::try_parse_from(args.clone())?;
 
@@ -133,44 +132,152 @@ auth_type = "None"
 }
 
 #[test]
-fn test_profile_listing() -> Result<(), Box<dyn std::error::Error>> {
-    let cfg = TempConfig::new().unwrap();
+fn tests_list_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
+    let _cfg = TempConfig::new().unwrap();
 
-    let (profile_1, profile_2, profile_3) = get_profiles();
+    let (profile_names, profiles) = get_profiles();
 
     let args_vec = vec![
-        build_add_profile_args(profile_1.clone()),
-        build_add_profile_args(profile_2.clone()),
-        build_add_profile_args(profile_3.clone()),
+        build_add_profile_args(profile_names[0].into(), profiles[0].clone()),
+        build_add_profile_args(profile_names[1].into(), profiles[1].clone()),
+        build_add_profile_args(profile_names[2].into(), profiles[2].clone()),
     ];
 
     // adds profiles
-    let _ = args_vec.iter().map(|args| {
-        let parsed_cli = cli::Cli::try_parse_from(args).unwrap();
+    let _ = args_vec
+        .iter()
+        .map(|args| -> Result<(), Box<dyn std::error::Error>> {
+            let parsed_cli = cli::Cli::try_parse_from(args)?;
 
+            cli::run(parsed_cli)?;
+
+            Ok(())
+        })
+        .collect::<Vec<_>>();
+
+    let out = capture_stdout(|| {
+        let args = build_list_profiles_args();
+
+        let parsed_cli = cli::Cli::try_parse_from(args.clone()).unwrap();
         cli::run(parsed_cli).unwrap();
     });
 
-    //let out = capture_stdout(|| {
-    let args = build_list_profiles_args();
+    // NOTE: test this output right after making the output pretty
+    let out = out.replace("\n✅ SUCCESS Profiles successfully fetched\n", "");
 
-    let parsed_cli = cli::Cli::try_parse_from(args.clone()).unwrap();
-    cli::run(parsed_cli).unwrap();
-    // });
+    // println!("------ profiles output: {} ------", out);
 
-    //println!("profiles output: {}", out);
+    assert!(out.len() > 0);
 
     Ok(())
 }
 
 #[test]
-fn test_profile_selection() {}
+fn tests_use_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
+    let cfg = TempConfig::new()?;
+
+    let ([profile_name, _, _], [profile, _, _]) = get_profiles();
+
+    // adds new profile
+    let args = build_add_profile_args(profile_name.to_string(), profile.clone());
+    let parsed_cli = cli::Cli::try_parse_from(args)?;
+    cli::run(parsed_cli)?;
+
+    let prev_cwd = env::current_dir()?;
+    env::set_current_dir(&cfg.repo)?;
+
+    let args = vec![
+        "octopush".into(),
+        "use-profile".into(),
+        "--profile-name".into(),
+        profile_name.to_string(),
+    ];
+    let parsed_cli = cli::Cli::try_parse_from(args)?;
+    cli::run(parsed_cli)?;
+
+    use octopush::core::app::App;
+    let (_, applied, _) = App::get_project_profile(cfg.repo.to_string_lossy().into_owned())?;
+    assert_eq!(applied, profile);
+
+    env::set_current_dir(prev_cwd)?;
+
+    Ok(())
+}
 
 #[test]
-fn test_profile_fetching() {}
+fn tests_get_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
+    let cfg = TempConfig::new()?;
+
+    let ([profile_name, _, _], [profile, _, _]) = get_profiles();
+
+    use octopush::core::app::App;
+    App::add_profile(profile_name.to_string(), profile)?;
+
+    let prev_cwd = env::current_dir()?;
+    env::set_current_dir(&cfg.repo)?;
+
+    App::use_profile(
+        profile_name.to_string(),
+        cfg.repo.to_string_lossy().into_owned(),
+    )?;
+
+    let out = capture_stdout(|| {
+        let args: Vec<String> = vec!["octopush".into(), "get-profile".into()];
+        let parsed_cli = cli::Cli::try_parse_from(args).unwrap();
+        cli::run(parsed_cli).unwrap();
+    });
+
+    let expected = format!(
+        "The repository '{}' is associated with profile {}.",
+        "repo", profile_name
+    );
+    assert!(out.contains(&expected));
+
+    env::set_current_dir(prev_cwd)?;
+
+    Ok(())
+}
 
 #[test]
-fn test_profile_resetting() {}
+fn tests_reset_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
+    let cfg = TempConfig::new()?;
+
+    let ([profile_name, _, _], [profile, _, _]) = get_profiles();
+
+    use octopush::core::app::App;
+    App::add_profile(profile_name.to_string(), profile)?;
+
+    let prev_cwd = env::current_dir()?;
+    env::set_current_dir(&cfg.repo)?;
+
+    App::use_profile(
+        profile_name.to_string(),
+        cfg.repo.to_string_lossy().into_owned(),
+    )?;
+
+    let (applied_name, _, repo_name) =
+        App::get_project_profile(cfg.repo.to_string_lossy().into_owned())?;
+
+    assert_eq!(applied_name, profile_name);
+
+    let args: Vec<String> = vec!["octopush".into(), "reset-profile".into()];
+    let parsed_cli = cli::Cli::try_parse_from(args)?;
+
+    cli::run(parsed_cli)?;
+
+    let result = App::get_project_profile(cfg.repo.to_string_lossy().into_owned());
+    let err = result.unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(
+        err.to_string(),
+        format!("profile not found for '{}'", repo_name)
+    );
+
+    env::set_current_dir(prev_cwd)?;
+
+    Ok(())
+}
 
 fn normalize(s: &str) -> String {
     s.lines()

@@ -92,11 +92,10 @@ static AUTH_TYPES: [AuthType; 3] = [AuthType::None, AuthType::SSH, AuthType::GH]
 static HOSTNAMES: [Option<&str>; 3] = [None, None, Some("github.com")];
 static SSH_KEY_PATHS: [Option<&str>; 3] = [None, Some("~/.ssh/id_ed25519"), None];
 
-pub fn get_profiles() -> (Profile, Profile, Profile) /* profile_1, profile_2, profile_3 */ {
+pub fn get_profiles<'a>() -> ([&'a str; 3], [Profile; 3]) /* profile_1, profile_2, profile_3 */ {
     let mut profiles: Vec<Profile> = Vec::new();
     for i in 0..PROFILE_NAMES.len() {
         profiles.push(Profile::build(
-            PROFILE_NAMES[i].to_string(),
             NAMES[i].to_string(),
             EMAILS[i].to_string(),
             AUTH_TYPES[i],
@@ -105,9 +104,11 @@ pub fn get_profiles() -> (Profile, Profile, Profile) /* profile_1, profile_2, pr
         ));
     }
 
-    (
+    let profiles: [Profile; 3] = [
         profiles[0].clone(),
         profiles[1].clone(),
         profiles[2].clone(),
-    )
+    ];
+
+    (PROFILE_NAMES, profiles)
 }
