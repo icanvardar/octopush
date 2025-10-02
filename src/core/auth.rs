@@ -25,3 +25,21 @@ impl FromStr for AuthType {
         }
     }
 }
+
+impl Into<String> for AuthType {
+    fn into(self) -> String {
+        let result: &str = self.into();
+
+        result.to_string()
+    }
+}
+
+impl<'a> Into<&'a str> for AuthType {
+    fn into(self) -> &'a str {
+        match self {
+            Self::None => "none",
+            Self::SSH => "ssh",
+            Self::GH => "gh",
+        }
+    }
+}
