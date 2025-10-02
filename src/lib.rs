@@ -13,5 +13,5 @@ pub mod util {
     pub mod system;
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-helpers"))]
 pub mod test_helpers;

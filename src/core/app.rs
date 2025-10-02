@@ -88,11 +88,15 @@ trait ProfileManager {
         Ok(())
     }
 
-    fn read_project_profile(repo_name: &str) -> Result<Option<Profile>, io::Error> {
+    fn read_project_profile(repo_name: &str) -> Result<Option<(String, Profile)>, io::Error> {
         let map = Self::read_project_profiles()?;
         if let Some(profile_name) = map.get(repo_name) {
             let profiles = Self::read_profiles()?;
-            Ok(profiles.get(profile_name).cloned())
+
+            Ok(match profiles.get(profile_name).cloned() {
+                Some(profile) => Some((profile_name.clone(), profile)),
+                None => None,
+            })
         } else {
             Ok(None)
         }
@@ -284,12 +288,13 @@ impl App {
 
     pub fn get_project_profile(
         project_path: String,
-    ) -> Result<(Profile, String) /* Profile and repo_name */, io::Error> {
+    ) -> Result<(String, Profile, String) /* profile_name, profile, and repo_name */, io::Error>
+    {
         let project = Project::new(project_path)?;
         let repo_name = project.get_repo_name()?;
 
         match App::read_project_profile(&repo_name)? {
-            Some(profile) => Ok((profile, repo_name)),
+            Some(profile) => Ok((profile.0, profile.1, repo_name)),
             None => Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("profile not found for '{}'", repo_name),
@@ -499,7 +504,7 @@ mod test {
 
         let result = TestPM::read_project_profile(REPO_1_NAME)?;
 
-        assert_eq!(profile_1, result.unwrap());
+        assert_eq!(profile_1, result.unwrap().1);
 
         Ok(())
     }
@@ -606,7 +611,6 @@ mod test {
         let ((profile_1_name, mut profile_1), (profile_2_name, mut profile_2)) = get_profiles();
         let profile_3_name = "profile_3_name";
         let mut profile_3 = Profile::build(
-            profile_3_name.to_string(),
             "profile_3".to_string(),
             "profile_3@mail.com".to_string(),
             AuthType::None,
@@ -820,7 +824,6 @@ mod test {
         // Arrange: create a NONE profile and write it
         let profile_name = "none_profile";
         let none_profile = Profile::build(
-            profile_name.to_string(),
             "None User".to_string(),
             "none@example.com".to_string(),
             AuthType::None,
@@ -880,7 +883,7 @@ mod test {
         )
         .unwrap();
 
-        let (found_profile, _) =
+        let (_profile_name, found_profile, _repo_name) =
             App::get_project_profile(cfg.repo.to_string_lossy().to_string()).unwrap();
 
         // Assert
@@ -933,7 +936,6 @@ mod test {
 
     fn get_profiles<'a>() -> ((&'a str, Profile), (&'a str, Profile)) {
         let profile_1 = Profile::build(
-            PROFILE_1_PROFILE_NAME.to_string(),
             PROFILE_1_NAME.to_string(),
             PROFILE_1_EMAIL.to_string(),
             PROFILE_1_AUTH_TYPE,
@@ -942,7 +944,6 @@ mod test {
         );
 
         let profile_2 = Profile::build(
-            PROFILE_2_PROFILE_NAME.to_string(),
             PROFILE_2_NAME.to_string(),
             PROFILE_2_EMAIL.to_string(),
             PROFILE_2_AUTH_TYPE,
