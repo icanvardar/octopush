@@ -107,31 +107,28 @@ pub fn run(cli: Cli) -> Result<(), std::io::Error> {
             match auth_type {
                 AuthType::None => {}
                 AuthType::SSH => {
-                    let input = dialoguer_path_input("Enter the path of your ssh key: ");
-                    ssh_key_path = if input.trim().is_empty() {
-                        None
-                    } else {
-                        Some(input)
-                    };
+                    if ssh_key_path.is_none() {
+                        let input = dialoguer_path_input("Enter the path of your ssh key: ");
+                        ssh_key_path = if input.trim().is_empty() {
+                            None
+                        } else {
+                            Some(input)
+                        };
+                    }
                 }
                 AuthType::GH => {
-                    hostname = Some(
-                        Input::new()
-                            .with_prompt("Enter the hostname of authenticated account")
-                            .interact_text()
-                            .unwrap(),
-                    );
+                    if hostname.is_none() {
+                        hostname = Some(
+                            Input::new()
+                                .with_prompt("Enter the hostname of authenticated account")
+                                .interact_text()
+                                .unwrap(),
+                        );
+                    }
                 }
             }
 
-            let profile = Profile::build(
-                profile_name.clone(),
-                name,
-                email,
-                auth_type,
-                hostname,
-                ssh_key_path,
-            );
+            let profile = Profile::build(name, email, auth_type, hostname, ssh_key_path);
 
             let _ = runner.run(
                 || {
@@ -165,6 +162,7 @@ pub fn run(cli: Cli) -> Result<(), std::io::Error> {
                 || {
                     let profiles = App::list_profiles()?;
 
+                    // NOTE: THE OUTPUT STYLE SUCKS. MAKE IT BETTER
                     println!("{:?}", profiles);
 
                     Ok(())
@@ -195,12 +193,12 @@ pub fn run(cli: Cli) -> Result<(), std::io::Error> {
 
             let _ = runner.run(
                 || {
-                    let (profile, repo_name) = App::get_project_profile(cwd)?;
+                    let (profile_name, _profile, repo_name) = App::get_project_profile(cwd)?;
 
                     runner.message(
                         format!(
                             "The repository '{}' is associated with profile {}.",
-                            repo_name, profile.id
+                            repo_name, profile_name,
                         )
                         .as_str(),
                     );
