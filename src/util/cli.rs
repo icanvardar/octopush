@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use dialoguer::{Input, Select};
 
 #[derive(Debug, Parser)]
@@ -158,17 +159,69 @@ pub fn run(cli: Cli) -> Result<(), std::io::Error> {
             Ok(())
         }
         Command::ListProfiles => {
-            let _ = runner.run(
+            let profiles = runner.run(
                 || {
                     let profiles = App::list_profiles()?;
 
-                    // NOTE: THE OUTPUT STYLE SUCKS. MAKE IT BETTER
-                    println!("{:?}", profiles);
-
-                    Ok(())
+                    Ok(profiles)
                 },
                 OperationType::ListProfiles,
             );
+
+            if let Ok(profiles) = profiles {
+                if profiles.is_empty() {
+                    runner.message("No profiles found.");
+                    return Ok(());
+                }
+
+                let headers = ["Profiles", "Name", "Email", "Auth", "Host", "SSH Key"];
+                let mut rows: Vec<[String; 6]> = profiles
+                    .iter()
+                    .map(|(profile_name, p)| {
+                        [
+                            profile_name.to_string(),
+                            p.name.clone(),
+                            p.email.clone(),
+                            String::from(p.auth_type),
+                            p.hostname.clone().unwrap_or_else(|| "-".into()),
+                            p.ssh_key_path.clone().unwrap_or_else(|| "-".into()),
+                        ]
+                    })
+                    .collect();
+
+                rows.sort_by(|a, b| a[0].cmp(&b[0]));
+
+                let mut widths = [0usize; 6];
+                for i in 0..6 {
+                    widths[i] = headers[i]
+                        .len()
+                        .max(rows.iter().map(|r| r[i].len()).max().unwrap_or(0));
+                }
+
+                let sep = " ";
+                let header_line = headers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| format!("{:<width$}", h.bold().cyan(), width = widths[i]))
+                    .collect::<Vec<_>>()
+                    .join(sep);
+                runner.message(&header_line);
+
+                let underline = widths
+                    .iter()
+                    .map(|w| "-".repeat(*w))
+                    .collect::<Vec<_>>()
+                    .join(sep);
+                runner.message(&underline);
+
+                for row in rows {
+                    let line = (0..6)
+                        .map(|i| format!("{:<width$}", row[i], width = widths[i]))
+                        .collect::<Vec<_>>()
+                        .join(sep);
+                    runner.message(&line);
+                }
+            }
 
             Ok(())
         }
