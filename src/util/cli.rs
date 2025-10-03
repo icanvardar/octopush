@@ -177,7 +177,7 @@ pub fn run(cli: Cli) -> Result<(), std::io::Error> {
 
             let _ = runner.run(
                 || {
-                    let _ = App::use_profile(profile_name.clone(), cwd)?;
+                    App::use_profile(profile_name.clone(), cwd)?;
 
                     Ok(())
                 },

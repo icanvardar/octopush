@@ -10,6 +10,12 @@ static CROSS: Emoji<'_, '_> = Emoji("❌ ", "✗ ");
 
 pub struct Runner {}
 
+impl Default for Runner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Runner {
     pub fn new() -> Self {
         Self {}
@@ -63,7 +69,7 @@ impl Runner {
         F: FnOnce() -> Result<R, Box<dyn std::error::Error>>,
     {
         let (initial_prompt, success_prompt, error_prompt) = operation_type.get_spinner_prompt();
-        let spinner = self.spinner(&format!("{}", initial_prompt));
+        let spinner = self.spinner(&initial_prompt);
         spinner.enable_steady_tick(Duration::from_millis(100));
         let started_at = Instant::now();
 
@@ -76,7 +82,7 @@ impl Runner {
                     std::thread::sleep(min_duration - elapsed);
                 }
                 spinner.with_message(format!("{} {}", CHECK, success_prompt));
-                self.success(&format!("{}", success_prompt));
+                self.success(&success_prompt);
                 Ok(result)
             }
             Err(e) => {
