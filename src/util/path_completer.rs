@@ -52,21 +52,22 @@ impl Completer for PathCompleter {
         _pos: usize,
         _ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        let (expanded_line, _home_for_tilde): (String, Option<PathBuf>) = if line.starts_with('~') {
-            let home = std::env::var("HOME")
-                .ok()
-                .or_else(|| std::env::var("USERPROFILE").ok())
-                .map(PathBuf::from);
-            if let Some(home) = home {
-                let mut s = home.to_string_lossy().into_owned();
-                s.push_str(&line[1..]);
-                (s, Some(home))
+        let (expanded_line, _home_for_tilde): (String, Option<PathBuf>) =
+            if let Some(stripped) = line.strip_prefix('~') {
+                let home = std::env::var("HOME")
+                    .ok()
+                    .or_else(|| std::env::var("USERPROFILE").ok())
+                    .map(PathBuf::from);
+                if let Some(home) = home {
+                    let mut s = home.to_string_lossy().into_owned();
+                    s.push_str(stripped);
+                    (s, Some(home))
+                } else {
+                    (line.to_string(), None)
+                }
             } else {
                 (line.to_string(), None)
-            }
-        } else {
-            (line.to_string(), None)
-        };
+            };
 
         let input_path = Path::new(&expanded_line);
         let (dir, prefix): (&Path, String) = if input_path.is_dir() {
@@ -159,12 +160,11 @@ pub fn dialoguer_path_input(prompt: &str) -> String {
         .or_else(|| std::env::var("USERPROFILE").ok())
         .map(PathBuf::from);
 
-    let abs_path = if input.starts_with('~') {
+    let abs_path = if let Some(p) = input.strip_prefix('~') {
         if let Some(home) = &home_dir {
             let mut s = home.to_path_buf();
-            let rest = &input[1..];
-            if !rest.is_empty() {
-                s.push(rest.trim_start_matches('/'));
+            if !p.is_empty() {
+                s.push(p.trim_start_matches('/'));
             }
             s
         } else {

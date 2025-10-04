@@ -2,6 +2,11 @@
 name = "octopush"
 version = "0.1.0"
 edition = "2024"
+authors = ["Can Vardar <https://github.com/icanvardar/octopush>"]
+description = "Profile management for Git repositories."
+readme = "./README.md"
+license-file = "./LICENSE"
+keywords = ["octopush", "git", "github", "gitlab"]
 
 [dependencies]
 clap = { version = "4.5.47", features = ["derive"] }

@@ -29,17 +29,11 @@ pub fn ensure_repo(repo: &Path) -> Result<(), std::io::Error> {
 pub fn set_local_identity(repo: &Path, name: &str, email: &str) -> Result<(), std::io::Error> {
     let o1 = run_git(repo, ["config", "--local", "user.name", name])?;
     if !o1.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to set user.name",
-        ));
+        return Err(std::io::Error::other("failed to set user.name"));
     }
     let o2 = run_git(repo, ["config", "--local", "user.email", email])?;
     if !o2.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to set user.email",
-        ));
+        return Err(std::io::Error::other("failed to set user.email"));
     }
     Ok(())
 }
@@ -62,10 +56,7 @@ pub fn get_remote_url(repo: &Path, remote: &str) -> Result<Option<String>, std::
 pub fn set_remote_url(repo: &Path, remote: &str, url: &str) -> Result<(), std::io::Error> {
     let o = run_git(repo, ["remote", "set-url", remote, url])?;
     if !o.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to set remote url",
-        ));
+        return Err(std::io::Error::other("failed to set remote url"));
     }
     Ok(())
 }
@@ -74,10 +65,7 @@ pub fn ensure_ssh_command(repo: &Path, key_path: &str) -> Result<(), std::io::Er
     let val = format!("ssh -i {} -F /dev/null", key_path);
     let o = run_git(repo, ["config", "--local", "core.sshCommand", &val])?;
     if !o.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to set core.sshCommand",
-        ));
+        return Err(std::io::Error::other("failed to set core.sshCommand"));
     }
     Ok(())
 }
@@ -97,10 +85,7 @@ pub fn set_gh_credential_helper(repo: &Path) -> Result<(), std::io::Error> {
         ],
     )?;
     if !o.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to set gh credential helper",
-        ));
+        return Err(std::io::Error::other("failed to set gh credential helper"));
     }
     let _ = run_git(
         repo,
@@ -124,7 +109,7 @@ pub fn parse_remote(url: &str) -> Option<(String, String, String)> {
     }
 
     if let Some(rest) = url.strip_prefix("ssh://") {
-        let after_user = rest.split('@').last().unwrap_or(rest);
+        let after_user = rest.split('@').next_back().unwrap_or(rest);
         let mut parts = after_user.splitn(2, '/');
         let host = parts.next()?.to_string();
         let path = parts.next()?;
@@ -169,15 +154,15 @@ fn dirs_home_config(sub: &str) -> Option<PathBuf> {
 }
 
 pub fn is_gh_authenticated(host: &str) -> bool {
-    if let Some(path) = gh_hosts_file() {
-        if let Ok(text) = fs::read_to_string(path) {
-            let has_host = text
-                .lines()
-                .any(|l| l.trim_start().starts_with(&format!("{}:", host)));
-            let has_token = text.contains("oauth_token:");
-            if has_host && has_token {
-                return true;
-            }
+    if let Some(path) = gh_hosts_file()
+        && let Ok(text) = fs::read_to_string(path)
+    {
+        let has_host = text
+            .lines()
+            .any(|l| l.trim_start().starts_with(&format!("{}:", host)));
+        let has_token = text.contains("oauth_token:");
+        if has_host && has_token {
+            return true;
         }
     }
 

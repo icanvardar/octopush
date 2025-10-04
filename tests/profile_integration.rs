@@ -137,7 +137,7 @@ fn tests_list_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
 
     let (profile_names, profiles) = get_profiles();
 
-    let args_vec = vec![
+    let args_vec = [
         build_add_profile_args(profile_names[0].into(), profiles[0].clone()),
         build_add_profile_args(profile_names[1].into(), profiles[1].clone()),
         build_add_profile_args(profile_names[2].into(), profiles[2].clone()),
@@ -167,7 +167,7 @@ fn tests_list_profile_cmd() -> Result<(), Box<dyn std::error::Error>> {
 
     // println!("------ profiles output: {} ------", out);
 
-    assert!(out.len() > 0);
+    assert!(!out.is_empty());
 
     Ok(())
 }

@@ -32,12 +32,9 @@ impl Project {
     pub fn get_repo_name(&self) -> Result<String, io::Error> {
         match Self::resolve_git_repo_name(&self.path)? {
             Some(name) => Ok(name),
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "no git repository found for given project path",
-                ));
-            }
+            None => Err(io::Error::other(
+                "no git repository found for given project path",
+            )),
         }
     }
 

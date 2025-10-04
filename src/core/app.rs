@@ -70,15 +70,14 @@ trait ProfileManager {
             return Ok(HashMap::new());
         }
         let profiles: HashMap<String, Profile> = toml::from_str(&content)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("TOML parse error: {e}")))?;
+            .map_err(|e| io::Error::other(format!("TOML parse error: {e}")))?;
         Ok(profiles)
     }
 
     fn write_profiles(profiles: &HashMap<String, Profile>) -> Result<(), io::Error> {
         let path = Self::profiles_config_path()?;
-        let toml_string = toml::to_string_pretty(profiles).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("TOML serialize error: {e}"))
-        })?;
+        let toml_string = toml::to_string_pretty(profiles)
+            .map_err(|e| io::Error::other(format!("TOML serialize error: {e}")))?;
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -93,10 +92,10 @@ trait ProfileManager {
         if let Some(profile_name) = map.get(repo_name) {
             let profiles = Self::read_profiles()?;
 
-            Ok(match profiles.get(profile_name).cloned() {
-                Some(profile) => Some((profile_name.clone(), profile)),
-                None => None,
-            })
+            Ok(profiles
+                .get(profile_name)
+                .cloned()
+                .map(|profile| (profile_name.clone(), profile)))
         } else {
             Ok(None)
         }
@@ -109,15 +108,14 @@ trait ProfileManager {
             return Ok(HashMap::new());
         }
         let map: HashMap<String, String> = toml::from_str(&content)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("TOML parse error: {e}")))?;
+            .map_err(|e| io::Error::other(format!("TOML parse error: {e}")))?;
         Ok(map)
     }
 
     fn write_project_profiles(map: &HashMap<String, String>) -> Result<(), io::Error> {
         let path = Self::project_profiles_path()?;
-        let toml_string = toml::to_string_pretty(map).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("TOML serialize error: {e}"))
-        })?;
+        let toml_string = toml::to_string_pretty(map)
+            .map_err(|e| io::Error::other(format!("TOML serialize error: {e}")))?;
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -148,9 +146,8 @@ trait ProfileManager {
                     if profile.hostname.is_some() || profile.ssh_key_path.is_some() {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!(
-                                "you cannot update 'hostname' or 'ssh_key_path' for 'none' auth type"
-                            ),
+                            "you cannot update 'hostname' or 'ssh_key_path' for 'none' auth type"
+                                .to_string(),
                         ));
                     }
                 }
@@ -158,7 +155,7 @@ trait ProfileManager {
                     if profile.hostname.is_some() {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!("you cannot update 'hostname' for 'ssh' auth type"),
+                            "you cannot update 'hostname' for 'ssh' auth type".to_string(),
                         ));
                     }
                 }
@@ -166,7 +163,7 @@ trait ProfileManager {
                     if profile.ssh_key_path.is_some() {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!("you cannot update 'ssh_key_path' for 'gh' auth type"),
+                            "you cannot update 'ssh_key_path' for 'gh' auth type".to_string(),
                         ));
                     }
                 }
@@ -211,32 +208,31 @@ trait ProfileManager {
                 if let Some(key) = &profile.ssh_key_path {
                     git::ensure_ssh_command(repo, key)?;
                 }
-                if let Some(url) = remote {
-                    if let Some((host, owner, repo_name)) = git::parse_remote(&url) {
-                        if url.starts_with("https://") {
-                            let ssh_url = git::to_ssh(&host, &owner, &repo_name);
-                            let _ = git::set_remote_url(repo, "origin", &ssh_url)?;
-                        }
-                    }
+                if let Some(url) = remote
+                    && let Some((host, owner, repo_name)) = git::parse_remote(&url)
+                    && url.starts_with("https://")
+                {
+                    let ssh_url = git::to_ssh(&host, &owner, &repo_name);
+                    git::set_remote_url(repo, "origin", &ssh_url)?;
                 }
-                let _ = git::clear_gh_credential_helper(repo)?;
+                git::clear_gh_credential_helper(repo)?;
             }
             AuthType::GH => {
-                if let Some(url) = remote {
-                    if let Some((host, owner, repo_name)) = git::parse_remote(&url) {
-                        if url.starts_with("git@") || url.starts_with("ssh://") {
-                            let https_url = git::to_https(&host, &owner, &repo_name);
-                            let _ = git::set_remote_url(repo, "origin", &https_url)?;
-                        }
-                        let _gh_ok = git::is_gh_authenticated(&host);
+                if let Some(url) = remote
+                    && let Some((host, owner, repo_name)) = git::parse_remote(&url)
+                {
+                    if url.starts_with("git@") || url.starts_with("ssh://") {
+                        let https_url = git::to_https(&host, &owner, &repo_name);
+                        git::set_remote_url(repo, "origin", &https_url)?;
                     }
+                    let _gh_ok = git::is_gh_authenticated(&host);
                 }
-                let _ = git::set_gh_credential_helper(repo)?;
-                let _ = git::clear_ssh_command(repo)?;
+                git::set_gh_credential_helper(repo)?;
+                git::clear_ssh_command(repo)?;
             }
             AuthType::None => {
-                let _ = git::clear_ssh_command(repo)?;
-                let _ = git::clear_gh_credential_helper(repo)?;
+                git::clear_ssh_command(repo)?;
+                git::clear_gh_credential_helper(repo)?;
             }
         }
 
@@ -312,10 +308,10 @@ impl App {
 
         let repo = std::path::Path::new(&project_path);
         git::ensure_repo(repo)?;
-        let _ = git::unset_local(repo, "user.name");
-        let _ = git::unset_local(repo, "user.email");
-        let _ = git::clear_ssh_command(repo)?;
-        let _ = git::clear_gh_credential_helper(repo)?;
+        git::unset_local(repo, "user.name")?;
+        git::unset_local(repo, "user.email")?;
+        git::clear_ssh_command(repo)?;
+        git::clear_gh_credential_helper(repo)?;
         Ok(())
     }
 }
@@ -364,7 +360,7 @@ mod test {
 
         let path_exists = TestPM::ensure_app_config_dir()?.exists();
 
-        assert_eq!(true, path_exists);
+        assert!(path_exists);
 
         Ok(())
     }
@@ -431,7 +427,7 @@ mod test {
 
         let mut found_profile = TestPM::read_profile(profile_name.to_string())?;
 
-        assert!(!found_profile.is_none());
+        assert!(found_profile.is_some());
         assert_eq!(found_profile.take(), Some(profile.clone()));
 
         Ok(())
@@ -909,14 +905,14 @@ mod test {
         // Pre-verify mapping exists
         let repo_name = Project::new(&cfg.repo).unwrap().get_repo_name().unwrap();
         let mapping = TestPM::read_project_profiles().unwrap();
-        assert!(mapping.get(&repo_name).is_some());
+        assert!(mapping.contains_key(&repo_name));
 
         // Act
         App::reset_profile_for_project(cfg.repo.to_string_lossy().to_string()).unwrap();
 
         // Assert: mapping removed
         let mapping_after = TestPM::read_project_profiles().unwrap();
-        assert!(mapping_after.get(&repo_name).is_none());
+        assert!(!mapping_after.contains_key(&repo_name));
 
         // Assert: git identity cleared
         let g1 = git::run_git(&cfg.repo, ["config", "--local", "--get", "user.name"]).unwrap();
