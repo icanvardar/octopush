@@ -912,7 +912,7 @@ mod test {
 
         // Assert: mapping removed
         let mapping_after = TestPM::read_project_profiles().unwrap();
-        assert!(mapping_after.contains_key(&repo_name));
+        assert!(!mapping_after.contains_key(&repo_name));
 
         // Assert: git identity cleared
         let g1 = git::run_git(&cfg.repo, ["config", "--local", "--get", "user.name"]).unwrap();
