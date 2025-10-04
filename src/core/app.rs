@@ -360,7 +360,7 @@ mod test {
 
         let path_exists = TestPM::ensure_app_config_dir()?.exists();
 
-        assert_eq!(true, path_exists);
+        assert!(path_exists);
 
         Ok(())
     }
@@ -427,7 +427,7 @@ mod test {
 
         let mut found_profile = TestPM::read_profile(profile_name.to_string())?;
 
-        assert!(!found_profile.is_none());
+        assert!(found_profile.is_some());
         assert_eq!(found_profile.take(), Some(profile.clone()));
 
         Ok(())
@@ -905,14 +905,14 @@ mod test {
         // Pre-verify mapping exists
         let repo_name = Project::new(&cfg.repo).unwrap().get_repo_name().unwrap();
         let mapping = TestPM::read_project_profiles().unwrap();
-        assert!(mapping.get(&repo_name).is_some());
+        assert!(mapping.contains_key(&repo_name));
 
         // Act
         App::reset_profile_for_project(cfg.repo.to_string_lossy().to_string()).unwrap();
 
         // Assert: mapping removed
         let mapping_after = TestPM::read_project_profiles().unwrap();
-        assert!(mapping_after.get(&repo_name).is_none());
+        assert!(mapping_after.contains_key(&repo_name));
 
         // Assert: git identity cleared
         let g1 = git::run_git(&cfg.repo, ["config", "--local", "--get", "user.name"]).unwrap();
